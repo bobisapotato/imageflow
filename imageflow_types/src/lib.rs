@@ -47,7 +47,22 @@ use imgref::ImgRef;
 //use std::str::FromStr;
 pub mod collections;
 
+#[derive(Copy, Clone, Debug, Eq, PartialEq, Ord, PartialOrd)]
+pub enum PixelLayout{
+    BGR,
+    BGRA,
+    Gray
+}
 
+impl PixelLayout{
+    pub fn channels(&self) -> usize{
+        match self{
+            PixelLayout::BGR => 3,
+            PixelLayout::BGRA => 4,
+            PixelLayout::Gray => 1
+        }
+    }
+}
 
 /// Memory layout for pixels.
 /// sRGB w/ gamma encoding assumed for 8-bit channels.
@@ -62,6 +77,31 @@ pub enum PixelFormat {
     Bgr24 = 3,
     #[serde(rename="gray_8")]
     Gray8 = 1,
+}
+
+impl PixelFormat {
+    pub fn pixel_layout(&self) -> PixelLayout {
+        match self{
+            PixelFormat::Bgra32 => PixelLayout::BGRA,
+            PixelFormat::Bgr32 => PixelLayout::BGRA,
+            PixelFormat::Bgr24 => PixelLayout::BGR,
+            PixelFormat::Gray8 => PixelLayout::Gray,
+        }
+    }
+    pub fn alpha_meaningful(&self) -> bool{
+        self == &PixelFormat::Bgra32
+    }
+
+    pub fn debug_name(&self) -> &'static str {
+        match self {
+            PixelFormat::Bgr24 => "bgra24",
+            PixelFormat::Gray8 => "gray8",
+            PixelFormat::Bgra32 => "bgra32",
+            PixelFormat::Bgr32 => "bgr32",
+            // _ => "?"
+        }
+    }
+
 }
 
 impl PixelFormat{
@@ -217,7 +257,8 @@ pub enum EncoderPreset {
     LibjpegTurbo {
         quality: Option<i32>,
         progressive: Option<bool>,
-        optimize_huffman_coding: Option<bool>
+        optimize_huffman_coding: Option<bool>,
+        matte: Option<Color>
     },
     Libpng {
         depth: Option<PngBitDepth>,
@@ -236,6 +277,7 @@ pub enum EncoderPreset {
     Mozjpeg {
         quality: Option<u8>,
         progressive: Option<bool>,
+        matte: Option<Color>
     },
     WebPLossy{
         quality: f32
@@ -257,14 +299,16 @@ impl EncoderPreset {
         EncoderPreset::LibjpegTurbo {
             quality: Some(100),
             optimize_huffman_coding: None,
-            progressive: None
+            progressive: None,
+            matte: None
         }
     }
     pub fn libjpeg_turbo_q(quality: Option<i32>) -> EncoderPreset {
         EncoderPreset::LibjpegTurbo {
             quality,
             optimize_huffman_coding: None,
-            progressive: None
+            progressive: None,
+            matte: None
         }
     }
 }
@@ -685,6 +729,8 @@ pub enum Node {
 //    },
     #[serde(rename="watermark")]
     Watermark (Watermark),
+    #[serde(rename="watermark_red_dot")]
+    WatermarkRedDot,
     #[serde(rename="white_balance_histogram_area_threshold_srgb")]
     WhiteBalanceHistogramAreaThresholdSrgb{
         threshold: Option<f32>
@@ -696,9 +742,10 @@ pub enum Node {
     #[serde(rename="color_filter_srgb")]
     ColorFilterSrgb (ColorFilterSrgb),
     // TODO: Block use except from FFI/unit test use
-    #[serde(rename="flow_bitmap_bgra_ptr")]
-    FlowBitmapBgraPtr {
-        ptr_to_flow_bitmap_bgra_ptr: usize,
+    #[serde(rename="flow_bitmap_key_ptr")]
+    FlowBitmapKeyPtr {
+        //TODO: Rename this
+        ptr_to_bitmap_key: usize,
     },
 }
 
@@ -1064,7 +1111,7 @@ impl Framewise {
                               },
                               Node::Encode {
                                   io_id: 1,
-                                  preset: EncoderPreset::LibjpegTurbo { quality: Some(90), optimize_huffman_coding: Some(true), progressive: Some(true)},
+                                  preset: EncoderPreset::LibjpegTurbo { quality: Some(90), optimize_huffman_coding: Some(true), progressive: Some(true), matte: None},
                               }])
     }
     pub fn example_graph() -> Framewise {
@@ -1118,7 +1165,7 @@ impl Framewise {
         nodes.insert("5".to_owned(),
                      Node::Encode {
                          io_id: 2,
-                         preset: EncoderPreset::LibjpegTurbo { quality: Some(90), optimize_huffman_coding: Some(true), progressive: Some(true) },
+                         preset: EncoderPreset::LibjpegTurbo { quality: Some(90), optimize_huffman_coding: Some(true), progressive: Some(true), matte: None},
                      });
 
         Framewise::Graph(Graph {
@@ -1261,6 +1308,17 @@ pub struct EncodeResult {
 
     pub bytes: ResultBytes,
 }
+#[derive(Serialize, Deserialize, Clone, PartialEq, Debug)]
+pub struct DecodeResult {
+    pub preferred_mime_type: String,
+    pub preferred_extension: String,
+
+    pub io_id: i32,
+    pub w: i32,
+    pub h: i32,
+}
+
+
 
 #[derive(Serialize, Deserialize, Clone, PartialEq, Debug)]
 pub struct NodePerf{
@@ -1286,6 +1344,7 @@ pub struct FramePerformance{
 #[derive(Serialize, Deserialize, Clone, PartialEq, Debug)]
 pub struct JobResult {
     pub encodes: Vec<EncodeResult>,
+    pub decodes: Vec<DecodeResult>,
     pub performance: Option<BuildPerformance>
 }
 
@@ -1295,6 +1354,8 @@ pub struct VersionInfo{
     pub last_git_commit: String,
     pub dirty_working_tree: bool,
     pub build_date: String,
+    pub git_tag: Option<String>,
+    pub git_describe_always: String
 }
 #[derive(Serialize, Deserialize, Clone, PartialEq, Debug)]
 pub enum ResponsePayload {
@@ -1348,6 +1409,7 @@ impl Response001 {
             success: true,
             message: None,
             data: ResponsePayload::JobResult(JobResult {
+                decodes: vec![],
                 encodes: vec![EncodeResult {
                                   io_id,
                                   w,

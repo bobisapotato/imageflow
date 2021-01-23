@@ -11,10 +11,8 @@ use crate::common::*;
 
 use imageflow_types;
 use imageflow_core::{Context, ErrorKind, FlowError, CodeLocation};
-use imageflow_core::ffi::BitmapBgra;
-use imageflow_types::{PixelFormat, Color, Node, ColorSrgb,
-                      EncoderPreset, ResampleHints, Filter, CommandStringKind,
-                        ConstraintMode, Constraint, PngBitDepth};
+use imageflow_types::{PixelFormat, Color, Node, ColorSrgb, EncoderPreset, ResampleHints, Filter, CommandStringKind, ConstraintMode, Constraint, PngBitDepth, PixelLayout};
+use imageflow_core::graphics::bitmaps::{BitmapCompositing, ColorSpace};
 
 
 const DEBUG_GRAPH: bool = false;
@@ -44,6 +42,119 @@ fn test_encode_gradients() {
     );
 }
 
+
+#[test]
+fn test_trim_whitespace() {
+    compare_encoded(
+        Some(IoTestEnum::Url("https://s3-us-west-2.amazonaws.com/imageflow-resources/test_inputs/shirt_transparent.png".to_owned())),
+        "transparent_trim_whitespace",
+        POPULATE_CHECKSUMS,
+        DEBUG_GRAPH,
+        Constraints {
+            similarity: Similarity::AllowDssimMatch(0.0, 0.002),
+            max_file_size: None
+        },
+        vec![
+            Node::CommandString{
+                kind: CommandStringKind::ImageResizer4,
+                value: "trim.threshold=80".to_owned(),
+                decode: Some(0),
+                encode: Some(1),
+                watermarks: None
+            }
+        ]
+    );
+}
+
+#[test]
+fn test_transparent_png_to_jpeg() {
+    compare_encoded(
+        Some(IoTestEnum::Url("https://s3-us-west-2.amazonaws.com/imageflow-resources/test_inputs/shirt_transparent.png".to_owned())),
+        "transparent_png_to_jpeg",
+        POPULATE_CHECKSUMS,
+        DEBUG_GRAPH,
+        Constraints {
+            similarity: Similarity::AllowDssimMatch(0.0, 0.002),
+            max_file_size: None
+        },
+        vec![
+            Node::CommandString{
+                kind: CommandStringKind::ImageResizer4,
+                value: "format=jpg".to_owned(),
+                decode: Some(0),
+                encode: Some(1),
+                watermarks: None
+            }
+        ]
+    );
+}
+
+#[test]
+fn test_transparent_png_to_jpeg_constrain() {
+    compare_encoded(
+        Some(IoTestEnum::Url("https://s3-us-west-2.amazonaws.com/imageflow-resources/test_inputs/shirt_transparent.png".to_owned())),
+        "transparent_png_to_jpeg_constrained",
+        POPULATE_CHECKSUMS,
+        DEBUG_GRAPH,
+        Constraints {
+            similarity: Similarity::AllowDssimMatch(0.0, 0.002),
+            max_file_size: None
+        },
+        vec![
+            Node::Decode{
+                io_id: 0,
+                commands: None
+            },
+            Node::Constrain(Constraint {
+                    mode: ConstraintMode::Within,
+                    w: Some(300),
+                    h: Some(300),
+                    hints: None,
+                    gravity: None,
+                    canvas_color: None //  Some(Color::Srgb(ColorSrgb::Hex("FFFFFFFF".to_string())))
+                }
+            ),
+            Node::Encode{
+                io_id: 1,
+                preset: EncoderPreset::Mozjpeg { quality: Some(100), progressive: None, matte: None }
+            }
+        ]
+    );
+}
+
+#[test]
+fn test_matte_transparent_png() {
+    compare_encoded(
+        Some(IoTestEnum::Url("https://s3-us-west-2.amazonaws.com/imageflow-resources/test_inputs/shirt_transparent.png".to_owned())),
+        "matte_transparent_png",
+        POPULATE_CHECKSUMS,
+        DEBUG_GRAPH,
+        Constraints {
+            similarity: Similarity::AllowDssimMatch(0.0, 0.002),
+            max_file_size: None
+        },
+        vec![
+            Node::Decode{
+                io_id: 0,
+                commands: None
+            },
+            Node::Constrain(Constraint {
+                mode: ConstraintMode::Within,
+                w: Some(300),
+                h: Some(300),
+                hints: None,
+                gravity: None,
+                canvas_color:  None // Some(Color::Srgb(ColorSrgb::Hex("FFFFFFFF".to_string())))
+            }
+            ),
+            Node::Encode{
+                io_id: 1,
+                preset: EncoderPreset::Libpng { depth: None, matte: Some(Color::Srgb(ColorSrgb::Hex("FFFFFFFF".to_string()))), zlib_compression: None }
+            }
+        ]
+    );
+}
+//https://imageflow-resources.s3-us-west-2.amazonaws.com/test_inputs/pnglogo_transparent.png
 
 
 #[test]
@@ -75,7 +186,7 @@ fn test_expand_rect(){
 
 #[test]
 fn test_crop(){
-    for _ in 1..100 { //WTF are we looping 100 times for?
+    for _ in 1..100 { //TODO: WTF are we looping 100 times for?
         let matched = compare(None, 500,
                               "FillRectAndCrop", POPULATE_CHECKSUMS, DEBUG_GRAPH, vec![
             Node::CreateCanvas { w: 200, h: 200, format: PixelFormat::Bgra32, color: Color::Srgb(ColorSrgb::Hex("FF5555FF".to_owned())) },
@@ -391,6 +502,43 @@ fn test_jpeg_simple() {
 }
 
 
+#[test]
+fn test_jpeg_simple_rot_90() {
+    let url = "https://s3-us-west-2.amazonaws.com/imageflow-resources/test_inputs/orientation/Landscape_1.jpg".to_owned();
+    let title = "test rotate jpeg 90 degrees".to_owned();
+    let matched = compare(Some(IoTestEnum::Url(url)), 500, &title, POPULATE_CHECKSUMS, DEBUG_GRAPH,
+                          vec![Node::Decode { io_id: 0, commands: None },
+                               Node::Constrain(Constraint { mode: ConstraintMode::Within, w: Some(70), h: Some(70), hints: None, gravity: None, canvas_color: None })
+                          , Node::Rotate90]);
+    assert!(matched);
+}
+
+#[test]
+fn test_rot_90_and_red_dot() {
+    let url = "https://s3-us-west-2.amazonaws.com/imageflow-resources/test_inputs/orientation/Landscape_1.jpg".to_owned();
+    let title = "test_rot_90_and_red_dot".to_owned();
+    let matched = compare(Some(IoTestEnum::Url(url)), 500, &title, POPULATE_CHECKSUMS, DEBUG_GRAPH,
+                          vec![Node::Decode { io_id: 0, commands: None },
+                               Node::Constrain(Constraint { mode: ConstraintMode::Within, w: Some(70), h: Some(70), hints: None, gravity: None, canvas_color: None })
+                               , Node::Rotate90,
+                                Node::WatermarkRedDot]);
+    assert!(matched);
+}
+#[test]
+fn test_rot_90_and_red_dot_command_string() {
+    let url = "https://s3-us-west-2.amazonaws.com/imageflow-resources/test_inputs/orientation/Landscape_1.jpg".to_owned();
+    let title = "test_rot_90_and_red_dot_command_string".to_owned();
+    let matched = compare(Some(IoTestEnum::Url(url)), 500, &title, POPULATE_CHECKSUMS, DEBUG_GRAPH,
+                          vec![Node::CommandString {
+                              kind: CommandStringKind::ImageResizer4,
+                              value: "w=70&h=70&mode=max&rotate=90&watermark_red_dot=true".to_string(),
+                              decode: Some(0),
+                              encode: None,
+                              watermarks: None
+                          }]);
+    assert!(matched);
+}
+
 
 #[test]
 fn test_jpeg_rotation() {
@@ -407,6 +555,24 @@ fn test_jpeg_rotation() {
         }
     }
 
+}
+
+#[test]
+fn test_jpeg_rotation_cropped() {
+
+        for flag in 1..9 {
+            let url = format!("https://s3-us-west-2.amazonaws.com/imageflow-resources/test_inputs/orientation/Portrait_{}.jpg", flag);
+            let title = format!("Test_Apply_Orientation_Cropped_Portrait_{}.jpg", flag);
+            let matched = compare(Some(IoTestEnum::Url(url)), 500, &title, POPULATE_CHECKSUMS, DEBUG_GRAPH,
+                                  vec![Node::CommandString{
+                kind: CommandStringKind::ImageResizer4,
+                value: "crop=134,155,279,439".to_owned(),
+                decode: Some(0),
+                encode: None,
+                watermarks: None
+            }]);
+            assert!(matched);
+        }
 }
 
 
@@ -485,6 +651,24 @@ fn decode_cmyk_jpeg() {
     assert!(matched);
 
 }
+
+#[test]
+fn decode_rgb_with_cmyk_profile_jpeg() {
+    let matched = compare(Some(IoTestEnum::Url("https://imageflow-resources.s3-us-west-2.amazonaws.com/test_inputs/wrenches.jpg".to_owned())), 500,
+                          "wrenches_decode", POPULATE_CHECKSUMS, DEBUG_GRAPH, vec![
+            Node::CommandString{
+                kind: CommandStringKind::ImageResizer4,
+                value: "ignore_icc_errors=true".to_owned(),
+                decode: Some(0),
+                encode: None,
+                watermarks: None
+            }
+        ]
+    );
+    assert!(matched);
+
+}
+
 
 #[test]
 fn test_crop_with_preshrink() {
@@ -740,7 +924,7 @@ fn test_encode_jpeg_smoke() {
     let steps = vec![
         Node::Decode {io_id: 0, commands: None},
         Node::Resample2D{ w: 400, h: 300,  hints: Some(ResampleHints::new().with_bi_filter(Filter::Robidoux)) },
-        Node::Encode{ io_id: 1, preset: EncoderPreset::LibjpegTurbo {quality: Some(100), progressive: None, optimize_huffman_coding: None}}
+        Node::Encode{ io_id: 1, preset: EncoderPreset::LibjpegTurbo {quality: Some(100), progressive: None, optimize_huffman_coding: None, matte: None}}
     ];
 
     smoke_test(Some(IoTestEnum::Url("https://s3-us-west-2.amazonaws.com/imageflow-resources/test_inputs/MarsRGB_v4_sYCC_8bit.jpg".to_owned())),
@@ -866,38 +1050,55 @@ fn test_detect_whitespace_all_small_images(){
     let mut count = 0;
     for w in 3..12u32{
         for h in 3..12u32{
-            let b = unsafe { &mut *BitmapBgra::create(&ctx, w, h, PixelFormat::Bgra32, Color::Black).unwrap() };
 
-            for x in 0..w{
-                for y in 0..h{
-                    if x == 1 && y == 1 && w == 3 && h == 3 {
-                        continue;
-                        // This is a checkerboard, we don't support them
-                    }
+            let mut bitmaps = ctx.borrow_bitmaps_mut().unwrap();
 
-                    for size in 1..3 {
-                        if x + size <= w && y + size <= h {
-                            b.fill_rect(&ctx, 0, 0, w, h, &Color::Transparent).unwrap();
-                            b.fill_rect(&ctx, x, y, x + size, y + size, &red).unwrap();
-                            let r = ::imageflow_core::graphics::whitespace::detect_content(&b, 1).unwrap();
-                            let correct = (r.x1 == x) && (r.y1 == y) && (r.x2 == x + size) && (r.y2 == y + size);
-                            if !correct {
-                                eprint!("Failed to correctly detect {}px dot at {},{} within {}x{}. Detected ", size, x, y, w, h);
-                                if r.x1 != x { eprint!("x1={}({})", r.x1, x);}
-                                if r.y1 != y { eprint!("y1={}({})", r.y1, y);}
-                                if r.x2 != x + size { eprint!("Detected x2={}({})", r.x2, x + size);}
-                                if r.y2 != y + size { eprint!("Detected y2={}({})", r.y2, y + size);}
-                                eprintln!(".");
-                                failed_count += 1;
-                            }
-                            count += 1;
+            let bitmap_key = bitmaps.create_bitmap_u8(
+                w,
+                h,
+                PixelLayout::BGRA,
+                false,
+                true,
+                ColorSpace::StandardRGB,
+                BitmapCompositing::BlendWithMatte(Color::Black)
+
+            ).unwrap();
+
+            {
+                let mut bitmap = bitmaps.try_borrow_mut(bitmap_key).unwrap();
+
+                let mut b = unsafe { bitmap.get_window_u8().unwrap().to_bitmap_bgra().unwrap() };
+
+                for x in 0..w {
+                    for y in 0..h {
+                        if x == 1 && y == 1 && w == 3 && h == 3 {
+                            continue;
+                            // This is a checkerboard, we don't support them
                         }
 
+                        for size in 1..3 {
+                            if x + size <= w && y + size <= h {
+                                b.fill_rect(0, 0, w, h, &Color::Transparent).unwrap();
+                                b.fill_rect(x, y, x + size, y + size, &red).unwrap();
+                                let r = ::imageflow_core::graphics::whitespace::detect_content(&b, 1).unwrap();
+                                let correct = (r.x1 == x) && (r.y1 == y) && (r.x2 == x + size) && (r.y2 == y + size);
+                                if !correct {
+                                    eprint!("Failed to correctly detect {}px dot at {},{} within {}x{}. Detected ", size, x, y, w, h);
+                                    if r.x1 != x { eprint!("x1={}({})", r.x1, x); }
+                                    if r.y1 != y { eprint!("y1={}({})", r.y1, y); }
+                                    if r.x2 != x + size { eprint!("Detected x2={}({})", r.x2, x + size); }
+                                    if r.y2 != y + size { eprint!("Detected y2={}({})", r.y2, y + size); }
+                                    eprintln!(".");
+                                    failed_count += 1;
+                                }
+                                count += 1;
+                            }
+                        }
                     }
                 }
             }
 
-            unsafe{ BitmapBgra::destroy(b, &ctx); }
+            assert!(bitmaps.free(bitmap_key));
 
         }
     }
@@ -913,21 +1114,54 @@ fn test_detect_whitespace_basic(){
 
     let red = Color::Srgb(ColorSrgb::Hex("FF0000FF".to_owned()));
 
-    let b = unsafe { &mut *BitmapBgra::create(&ctx, 10, 10, PixelFormat::Bgra32, Color::Black).unwrap() };
-    b.fill_rect(&ctx, 1, 1, 9, 9, &red).unwrap();
-    let r = ::imageflow_core::graphics::whitespace::detect_content(&b, 1).unwrap();
-    assert_eq!(r.x1,1);
-    assert_eq!(r.y1,1);
-    assert_eq!(r.x2,9);
-    assert_eq!(r.y2,9);
+    let mut bitmaps = ctx.borrow_bitmaps_mut().unwrap();
 
-    let b = unsafe { &mut *BitmapBgra::create(&ctx, 100, 100, PixelFormat::Bgra32, Color::Black).unwrap() };
-    b.fill_rect(&ctx, 2, 3, 70, 70, &red).unwrap();
-    let r = ::imageflow_core::graphics::whitespace::detect_content(&b, 1).unwrap();
-    assert_eq!(r.x1,2);
-    assert_eq!(r.y1,3);
-    assert_eq!(r.x2,70);
-    assert_eq!(r.y2,70);
+    let bitmap_key_a = bitmaps.create_bitmap_u8(
+        10,
+        10,
+        PixelLayout::BGRA,
+        false,
+        true,
+        ColorSpace::StandardRGB,
+        BitmapCompositing::BlendWithMatte(Color::Black)
+
+    ).unwrap();
+
+    {
+        let mut bitmap = bitmaps.try_borrow_mut(bitmap_key_a).unwrap();
+        let mut b = unsafe { bitmap.get_window_u8().unwrap().to_bitmap_bgra().unwrap() };
+
+
+        b.fill_rect(1, 1, 9, 9, &red).unwrap();
+        let r = ::imageflow_core::graphics::whitespace::detect_content(&b, 1).unwrap();
+        assert_eq!(r.x1, 1);
+        assert_eq!(r.y1, 1);
+        assert_eq!(r.x2, 9);
+        assert_eq!(r.y2, 9);
+    }
+
+    let bitmap_key_b = bitmaps.create_bitmap_u8(
+        100,
+        100,
+        PixelLayout::BGRA,
+        false,
+        true,
+        ColorSpace::StandardRGB,
+        BitmapCompositing::BlendWithMatte(Color::Black)
+
+    ).unwrap();
+
+    {
+        let mut bitmap = bitmaps.try_borrow_mut(bitmap_key_b).unwrap();
+        let mut b = unsafe { bitmap.get_window_u8().unwrap().to_bitmap_bgra().unwrap() };
+
+        b.fill_rect(2, 3, 70, 70, &red).unwrap();
+        let r = ::imageflow_core::graphics::whitespace::detect_content(&b, 1).unwrap();
+        assert_eq!(r.x1, 2);
+        assert_eq!(r.y1, 3);
+        assert_eq!(r.x2, 70);
+        assert_eq!(r.y2, 70);
+    }
 }
 
 //#[test]

@@ -15,7 +15,9 @@ mod constrain;
 mod white_balance;
 mod color;
 mod watermark;
+mod watermark_red_dot;
 mod enable_transparency;
+mod command_string;
 //mod detection;
 
 mod internal_prelude {
@@ -40,7 +42,7 @@ pub use self::clone_crop_fill_expand::EXPAND_CANVAS;
 pub use self::clone_crop_fill_expand::REGION_PERCENT;
 pub use self::clone_crop_fill_expand::REGION;
 pub use self::clone_crop_fill_expand::FILL_RECT;
-pub use self::codecs_and_pointer::BITMAP_BGRA_POINTER;
+pub use self::codecs_and_pointer::BITMAP_KEY_POINTER;
 pub use self::codecs_and_pointer::DECODER;
 pub use self::codecs_and_pointer::ENCODE;
 pub use self::codecs_and_pointer::PRIMITIVE_DECODER;
@@ -60,18 +62,20 @@ pub use self::scale_render::DRAW_IMAGE_EXACT;
 //pub use self::scale_render::SCALE_1D;
 //pub use self::scale_render::SCALE_1D_TO_CANVAS_1D;
 pub use self::constrain::CONSTRAIN;
-pub use self::constrain::COMMAND_STRING;
+pub use self::command_string::COMMAND_STRING;
 pub use self::white_balance::WHITE_BALANCE_SRGB_MUTATE;
 pub use self::white_balance::WHITE_BALANCE_SRGB;
 pub use self::color::COLOR_MATRIX_SRGB_MUTATE;
 pub use self::color::COLOR_MATRIX_SRGB;
 pub use self::color::COLOR_FILTER_SRGB;
 pub use self::watermark::WATERMARK;
+pub use self::watermark_red_dot::WATERMARK_RED_DOT;
 pub use self::enable_transparency::ENABLE_TRANSPARENCY;
 
 //pub use self::detection::CROP_FACES;
 
 use super::definitions::*;
+use crate::graphics::bitmaps::BitmapKey;
 
 #[test]
 fn test_err() {
@@ -144,11 +148,11 @@ impl<'c> OpCtxMut<'c> {
     pub fn first_parent_result_frame(&self,
                                              of_node: NodeIndex,
                                              kind: EdgeKind)
-                                             -> Option<*mut BitmapBgra> {
+                                             -> Option<BitmapKey> {
         self.first_parent_of_kind(of_node, kind)
             .and_then(|ix| self.graph.node_weight(ix))
             .and_then(|w| match w.result {
-                NodeResult::Frame(ptr) => Some(ptr),
+                NodeResult::Frame(key) => Some(key),
                 _ => None,
             })
     }
@@ -215,19 +219,18 @@ impl<'c> OpCtxMut<'c> {
         }
     }
 
-
-    pub fn bitmap_bgra_from(&mut self, ix: NodeIndex, filter_by_kind: EdgeKind) -> Result<*mut BitmapBgra> {
+    pub fn bitmap_key_from(&mut self, ix: NodeIndex, filter_by_kind: EdgeKind) -> Result<BitmapKey> {
         let parent = self.first_parent_of_kind_required(ix, filter_by_kind)?;
 
         let result = &self.graph.node_weight(parent).expect(loc!("first_parent_of_kind_required provided invalid node index")).result;
-        if let NodeResult::Frame(bitmap) = *result {
-            if bitmap.is_null() {
-                Err(nerror!(crate::ErrorKind::BitmapPointerNull, "Parent {:?} node has NodeResult::Frame(null)", filter_by_kind).with_ctx_mut(self, ix))
+        if let NodeResult::Frame(bitmap_key) = *result {
+            if self.c.bitmaps.borrow().get(bitmap_key).is_none(){
+                Err(nerror!(crate::ErrorKind::BitmapPointerNull, "Parent {:?} node has NodeResult::Frame(invalid key)", filter_by_kind).with_ctx_mut(self, ix))
             } else {
-                Ok(bitmap)
+                Ok(bitmap_key)
             }
         }else{
-            Err(nerror!(crate::ErrorKind::InvalidOperation, "Parent {:?} node lacks NodeResult::Frame(bitmap). Value is {:?}", filter_by_kind, result).with_ctx_mut(self, ix))
+            Err(nerror!(crate::ErrorKind::InvalidOperation, "Parent {:?} node lacks NodeResult::Frame(bitmap_key). Value is {:?}", filter_by_kind, result).with_ctx_mut(self, ix))
         }
     }
     pub fn consume_parent_result(&mut self, ix: NodeIndex, filter_by_kind: EdgeKind) -> Result<()> {

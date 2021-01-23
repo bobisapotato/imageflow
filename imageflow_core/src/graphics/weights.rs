@@ -6,25 +6,95 @@
  * Commercial licenses available at http://imageresizing.net/
  */
 
-use ::imageflow_types::Filter;
 use std::f64;
 use std::i32;
 use std::u32;
 
+use serde::{Serialize,Deserialize};
+use crate::graphics::aligned_buffer::AlignedBuffer;
+
+/// Named interpolation function+configuration presets
+#[repr(C)]
+#[derive(Copy, Clone, PartialEq, PartialOrd, Debug)]
+pub enum Filter {
+    RobidouxFast = 1,
+    Robidoux = 2,
+    RobidouxSharp = 3,
+    Ginseng = 4,
+    GinsengSharp = 5,
+    Lanczos = 6,
+    LanczosSharp = 7,
+    Lanczos2 = 8,
+    Lanczos2Sharp = 9,
+    CubicFast = 10,
+    Cubic = 11,
+    CubicSharp = 12,
+    CatmullRom = 13,
+    Mitchell = 14,
+    CubicBSpline = 15,
+    Hermite = 16,
+    Jinc = 17,
+    RawLanczos3 = 18,
+    RawLanczos3Sharp = 19,
+    RawLanczos2 = 20,
+    RawLanczos2Sharp = 21,
+    Triangle = 22,
+    Linear = 23,
+    Box = 24,
+    CatmullRomFast = 25,
+    CatmullRomFastSharp = 26,
+
+    Fastest = 27,
+    MitchellFast = 28,
+    NCubic = 29,
+    NCubicSharp = 30,
+    LegacyIDCTFilter = 31
+}
+
+impl From<imageflow_types::Filter> for Filter {
+    fn from(filter: imageflow_types::Filter) -> Self {
+        match filter{
+            imageflow_types::Filter::RobidouxFast => Filter::RobidouxFast,
+            imageflow_types::Filter::Robidoux => Filter::Robidoux,
+            imageflow_types::Filter::RobidouxSharp => Filter::RobidouxSharp,
+            imageflow_types::Filter::Ginseng => Filter::Ginseng,
+            imageflow_types::Filter::GinsengSharp => Filter::GinsengSharp,
+            imageflow_types::Filter::Lanczos => Filter::Lanczos,
+            imageflow_types::Filter::LanczosSharp => Filter::LanczosSharp,
+            imageflow_types::Filter::Lanczos2 => Filter::Lanczos2,
+            imageflow_types::Filter::Lanczos2Sharp => Filter::Lanczos2Sharp,
+            imageflow_types::Filter::Cubic => Filter::Cubic,
+            imageflow_types::Filter::CubicSharp => Filter::CubicSharp,
+            imageflow_types::Filter::CatmullRom => Filter::CatmullRom,
+            imageflow_types::Filter::Mitchell => Filter::Mitchell,
+            imageflow_types::Filter::CubicBSpline => Filter::CubicBSpline,
+            imageflow_types::Filter::Hermite => Filter::Hermite,
+            imageflow_types::Filter::Jinc => Filter::Jinc,
+            imageflow_types::Filter::Triangle => Filter::Triangle,
+            imageflow_types::Filter::Linear => Filter::Linear,
+            imageflow_types::Filter::Box => Filter::Box,
+            imageflow_types::Filter::Fastest => Filter::Fastest,
+            imageflow_types::Filter::NCubic => Filter::NCubic,
+            imageflow_types::Filter::NCubicSharp => Filter::NCubicSharp,
+        }
+
+    }
+}
+
 pub struct InterpolationDetails {
     /// 1 is the default; near-zero overlapping between windows. 2 overlaps 50% on each side.
-    window: f64,
+     window: f64,
     /// Coefficients for bicubic weighting
-    p1: f64,
-    p2: f64,
-    p3: f64,
-    q1: f64,
-    q2: f64,
-    q3: f64,
-    q4: f64,
+     p1: f64,
+     p2: f64,
+     p3: f64,
+     q1: f64,
+     q2: f64,
+     q3: f64,
+     q4: f64,
     /// Blurring factor when > 1, sharpening factor when < 1. Applied to weights.
     blur: f64,
-    filter: fn(&InterpolationDetails,f64) -> f64,
+    pub filter: fn(&InterpolationDetails,f64) -> f64,
     /// How much sharpening we are requesting
     sharpen_percent_goal: f32
 }
@@ -45,7 +115,11 @@ impl Default for InterpolationDetails {
         }
     }
 }
+
 impl InterpolationDetails{
+    pub fn set_sharpen_percent_goal(&mut self, goal: f32){
+        self.sharpen_percent_goal = goal;
+    }
     fn bicubic(window: f64, blur: f64, b: f64, c: f64) -> InterpolationDetails{
         let bx2 = b + b;
         InterpolationDetails{
@@ -62,7 +136,7 @@ impl InterpolationDetails{
         }
     }
 
-    fn create(filter: Filter) -> InterpolationDetails {
+    pub fn create(filter: Filter) -> InterpolationDetails {
         match filter {
             Filter::Triangle | Filter::Linear
             => InterpolationDetails { window: 1f64, blur: 1f64, filter: filter_triangle, ..Default::default() },
@@ -87,7 +161,7 @@ impl InterpolationDetails{
             Filter::CatmullRom => InterpolationDetails::bicubic(2f64, 1f64, 0f64, 0.5f64),
             Filter::CatmullRomFast => InterpolationDetails::bicubic(1f64, 1f64, 0f64, 0.5f64),
             Filter::CatmullRomFastSharp => InterpolationDetails::bicubic(1f64, 13.0f64
-                /
+               /
                 16.0f64, 0f64, 0.5f64),
 
             Filter::Mitchell => InterpolationDetails::bicubic(2f64, 1f64, 1.0f64 / 3.0f64, 1.0f64 / 3.0f64),
@@ -107,6 +181,12 @@ impl InterpolationDetails{
             Filter::Robidoux => InterpolationDetails::bicubic(2f64, 1.0f64,
                                                               0.3782157550939987f64,
                                                               0.3108921224530007f64),
+
+            Filter::LegacyIDCTFilter => InterpolationDetails::bicubic(2f64, 1. / 1.1685777620836932,
+                                                                      0.3782157550939987f64,
+                                                                      0.3108921224530007f64),
+
+
             Filter::Fastest => InterpolationDetails::bicubic(0.74f64,
                                                              0.74f64,
                                                              0.3782157550939987f64,
@@ -152,7 +232,7 @@ impl InterpolationDetails{
         negative_area / positive_area
     }
 }
-fn filter_flex_cubic(d: &InterpolationDetails, x: f64) -> f64{
+ fn filter_flex_cubic(d: &InterpolationDetails, x: f64) -> f64{
     let t: f64 = x.abs() / d.blur;
     if t < 1.0 {
         return d.p1 + t * (t * (d.p2 + t * d.p3));
@@ -163,7 +243,7 @@ fn filter_flex_cubic(d: &InterpolationDetails, x: f64) -> f64{
     0.0
 }
 
-fn filter_bicubic_fast(d: &InterpolationDetails,
+ fn filter_bicubic_fast(d: &InterpolationDetails,
                                           t: f64)
                                          -> f64 {
     let abs_t: f64 = t.abs() / d.blur;
@@ -179,7 +259,7 @@ fn filter_bicubic_fast(d: &InterpolationDetails,
     }
 }
 
-fn filter_sinc( d: &InterpolationDetails,t: f64) -> f64 {
+ fn filter_sinc( d: &InterpolationDetails,t: f64) -> f64 {
     let abs_t: f64 = t.abs() / d.blur;
     if abs_t == 0f64 {
         // Avoid division by zero
@@ -191,7 +271,7 @@ fn filter_sinc( d: &InterpolationDetails,t: f64) -> f64 {
         return a.sin() / a
     };
 }
-fn filter_box(d: &InterpolationDetails, t: f64) -> f64 {
+ fn filter_box(d: &InterpolationDetails, t: f64) -> f64 {
     let x: f64 = t / d.blur;
     if x >= -1f64 * d.window && x < d.window {
         1f64
@@ -199,12 +279,12 @@ fn filter_box(d: &InterpolationDetails, t: f64) -> f64 {
         0f64
     }
 }
-fn filter_triangle(d: &InterpolationDetails, t: f64) -> f64 {
+ fn filter_triangle(d: &InterpolationDetails, t: f64) -> f64 {
     let x: f64 = t.abs() / d.blur;
     if x < 1.0f64 { return 1.0f64 - x } else { return 0.0f64 };
 }
 
-fn filter_sinc_windowed( d: &InterpolationDetails,
+ fn filter_sinc_windowed( d: &InterpolationDetails,
                                            t: f64)
                                           -> f64 {
     let x: f64 = t / d.blur;
@@ -222,7 +302,7 @@ fn filter_sinc_windowed( d: &InterpolationDetails,
 }
 
 
-fn filter_jinc(d: &InterpolationDetails, t: f64) -> f64 {
+ fn filter_jinc(d: &InterpolationDetails, t: f64) -> f64 {
     let x: f64 = t.abs() / d.blur;
     ////x crossing #1 1.2196698912665045
     if x == 0.0f64 {
@@ -249,7 +329,7 @@ static double filter_window_jinc (const struct flow_interpolation_details * d, d
 }
 */
 
-fn filter_ginseng(d: &InterpolationDetails, t: f64) -> f64 {
+ fn filter_ginseng(d: &InterpolationDetails, t: f64) -> f64 {
     // Sinc windowed by jinc
     let abs_t: f64 = t.abs() / d.blur;
     let t_pi: f64 = abs_t * f64::consts::PI;
@@ -268,7 +348,7 @@ fn filter_ginseng(d: &InterpolationDetails, t: f64) -> f64 {
 }
 
 
-fn bessj1(x :f64) -> f64 {
+ fn bessj1(x :f64) -> f64 {
     // For improvement consider https://www.cl.cam.ac.uk/~jrh13/papers/bessel.pdf
     // TODO: test jinc filters against C impl
     let ax = x.abs();
@@ -298,27 +378,141 @@ fn bessj1(x :f64) -> f64 {
 }
 
 
+#[derive(Debug,  Clone, PartialEq, Eq)]
+pub enum WeightsError{
+    AllocationFailed,
+    NoPixelInputs,
+    ContribDataTooSmall,
+    PixelWeightsTooSmall,
+    SourcePixelCountTooLarge,
+    TotalWeightZero,
+    TryReserveCalledRepeatedly,
+    TryReserveNotCalled
+}
 
 
 
-pub trait WeightContainer{
-    fn try_reserve(&mut self, total_output_pixels: u32, inputs_per_outputs: u32) -> bool;
-    fn add_output_pixel(&mut self, left_input_pixel: u32, right_input_pixel: u32, weights: &[f32]) -> bool;
+ pub trait WeightContainer{
+     /// Must be called before add_output_pixel, and must only be called once
+    fn try_reserve(&mut self, total_output_pixels: u32, inputs_per_outputs: u32) -> Result<(),WeightsError>;
+    fn add_output_pixel(&mut self, left_input_pixel: u32, right_input_pixel: u32, weights: &[f32]) -> Result<(),WeightsError>;
 
 }
 
-//TODO: use an arena
-#[derive (  Clone )]
-#[repr(C)]
 pub struct PixelRowWeights {
-    pub contrib_row: Vec<PixelWeights>,
-    pub window_size: u32,
-    pub line_length: u32,
-    pub percent_negative: f64,
+    contrib_row: Option<AlignedBuffer<PixelWeightIndexes>>,
+    contrib_row_length: usize,
+    weights: Option<AlignedBuffer<f32>>,
+    weights_length: usize
 }
-#[derive (  Clone )]
+
+impl PixelRowWeights{
+    pub fn new() -> PixelRowWeights{
+        PixelRowWeights{
+            contrib_row: None,
+            contrib_row_length: 0,
+            weights: None,
+            weights_length: 0
+        }
+    }
+    pub fn contrib_row(&self) -> &[PixelWeightIndexes]{
+        self.contrib_row
+            .as_ref()
+            .map(|r| &r.as_slice()[..self.contrib_row_length])
+            .unwrap_or(&[])
+    }
+    pub fn weights(&self) -> &[f32]{
+        self.weights
+            .as_ref()
+            .map(|r| &r.as_slice()[..self.weights_length])
+            .unwrap_or(&[])
+    }
+
+    pub fn create_for(details: &InterpolationDetails,
+                      output_line_size :u32,
+                      input_line_size :u32) -> Result<PixelRowWeights,WeightsError>{
+        let mut weights = PixelRowWeights::new();
+        populate_weights(&mut weights, output_line_size, input_line_size, details)?;
+        Ok(weights)
+    }
+
+}
+#[derive(Clone, Copy)]
 #[repr(C)]
-pub struct PixelWeights {
+pub struct PixelWeightIndexes {
+    /// index of weight for first input pixel
+    pub left_weight: u32,
+    /// index of weight for last input pixel
+    pub right_weight: u32,
+    /// index of first input pixel
+    pub left_pixel: u32,
+    /// index of last input pixel
+    pub right_pixel: u32,
+}
+
+unsafe impl rgb::Zeroable for PixelWeightIndexes{}
+
+impl WeightContainer for PixelRowWeights {
+    fn try_reserve(&mut self, total_output_pixels: u32, inputs_per_outputs: u32) -> Result<(),WeightsError> {
+        if self.contrib_row.is_some() ||
+            self.weights.is_some(){
+            return Err(WeightsError::TryReserveCalledRepeatedly);
+        }
+        self.contrib_row = Some(AlignedBuffer::new(total_output_pixels as usize, 16)
+            .map_err(|e| WeightsError::AllocationFailed )?);
+
+        self.weights = Some(AlignedBuffer::new(inputs_per_outputs as usize * total_output_pixels as usize, 64)
+            .map_err(|e| WeightsError::AllocationFailed )?);
+
+        Ok(()) //TODO: use fallible allocators in nightly mode
+    }
+
+    fn add_output_pixel(&mut self, left_input_pixel: u32, right_input_pixel: u32, weights_to_add: &[f32]) -> Result<(),WeightsError> {
+        if self.contrib_row.is_none() ||
+            self.weights.is_none(){
+            return Err(WeightsError::TryReserveNotCalled)
+        }
+        let contrib_row = self.contrib_row.as_mut().unwrap().as_slice_mut();
+        let weights = self.weights.as_mut().unwrap().as_slice_mut();
+
+
+        if self.contrib_row_length >= contrib_row.len() {
+            return Err(WeightsError::ContribDataTooSmall);
+        }
+        if self.weights_length + weights_to_add.len() > weights.len() {
+            return Err(WeightsError::PixelWeightsTooSmall);
+        }
+        if weights_to_add.len() == 0 {
+            return Err(WeightsError::NoPixelInputs);
+        }
+
+
+        let left_weight = self.weights_length;
+        let right_weight = self.weights_length + weights_to_add.len() - 1;
+
+        weights[left_weight..=right_weight].copy_from_slice(weights_to_add);
+        self.weights_length = right_weight + 1;
+
+        contrib_row[self.contrib_row_length] = PixelWeightIndexes {
+            left_weight: left_weight as u32,
+            right_weight: right_weight as u32,
+            left_pixel: left_input_pixel,
+            right_pixel: right_input_pixel
+        };
+        self.contrib_row_length += 1;
+        Ok(())
+    }
+}
+
+
+#[derive(Clone)]
+#[repr(C)]
+pub struct PixelRowWeightsSimple {
+    pub contrib_row: Vec<PixelWeightsSimple>,
+}
+#[derive(Clone)]
+#[repr(C)]
+pub struct PixelWeightsSimple {
     /// weights for input pixels
     pub weights: Vec<f32>,
     /// index of first input pixel
@@ -327,27 +521,27 @@ pub struct PixelWeights {
     pub right: i32,
 }
 
-impl WeightContainer for PixelRowWeights{
-    fn try_reserve(&mut self, total_output_pixels: u32, inputs_per_outputs: u32) -> bool {
-        let space_needed = total_output_pixels as usize - self.contrib_row.capacity();
+impl WeightContainer for PixelRowWeightsSimple {
+    fn try_reserve(&mut self, total_output_pixels: u32, inputs_per_outputs: u32) -> Result<(),WeightsError> {
+        let space_needed = total_output_pixels as usize - self.contrib_row.len();
         if space_needed > 0{
             self.contrib_row.reserve_exact(space_needed)
         }
-        true //TODO: use fallible allocators in nightly mode
+        Ok(()) //TODO: use fallible allocators in nightly mode
     }
 
-    fn add_output_pixel(&mut self, left_input_pixel: u32, right_input_pixel: u32, weights: &[f32]) -> bool {
+    fn add_output_pixel(&mut self, left_input_pixel: u32, right_input_pixel: u32, weights: &[f32]) -> Result<(),WeightsError> {
         if self.contrib_row.len() < self.contrib_row.capacity() {
-            self.contrib_row.push(PixelWeights { weights: weights.to_vec(), left: left_input_pixel as i32, right: right_input_pixel as i32});
-            true
+            self.contrib_row.push(PixelWeightsSimple { weights: weights.to_vec(), left: left_input_pixel as i32, right: right_input_pixel as i32});
+            Ok(())
         }else{
-            false
+            Err(WeightsError::ContribDataTooSmall)
         }
 
     }
 }
-pub  fn populate_weights(container: &mut dyn WeightContainer, output_line_size :u32,
-                         input_line_size :u32,details: &InterpolationDetails) -> bool {
+pub  fn populate_weights<T:WeightContainer>(container: &mut T, output_line_size :u32,
+                         input_line_size :u32,details: &InterpolationDetails) -> Result<(),WeightsError> {
     let sharpen_ratio: f64 = details.calculate_percent_negative_weight();
     let desired_sharpen_ratio: f64 =
         1.0f64.min(
@@ -364,9 +558,8 @@ pub  fn populate_weights(container: &mut dyn WeightContainer, output_line_size :
         ((2i32 as f64 * (half_source_window - 0.00001f64)).ceil() as
             i32 + 1i32) as u32;
 
-    if !container.try_reserve(output_line_size, allocated_window_size) {
-        return false
-    }
+    container.try_reserve(output_line_size, allocated_window_size)?;
+
 
 
     let filter_func = details.filter;
@@ -380,20 +573,10 @@ pub  fn populate_weights(container: &mut dyn WeightContainer, output_line_size :
         weights.clear();
         let center_src_pixel: f64 =
             (u as f64 + 0.5f64) / scale_factor - 0.5f64;
-        let left_edge: i32 =
-            (center_src_pixel.floor() as
-                u32).wrapping_sub(allocated_window_size.wrapping_sub(1i32
-                as
-                u32).wrapping_div(2i32
-                as
-                u32))
-                as i32;
-        let right_edge: i32 =
-            (left_edge as
-                u32).wrapping_add(allocated_window_size).wrapping_sub(1i32
-                as
-                u32)
-                as i32;
+        let left_edge: i32 = (center_src_pixel - details.window / downscale_factor - 0.0001)
+            .ceil() as i32;
+        let right_edge: i32 = (center_src_pixel + details.window / downscale_factor + 0.0001)
+            .floor() as i32;
         let left_src_pixel: u32 =
             0i32.max(left_edge) as u32;
         let right_src_pixel: u32 =
@@ -410,11 +593,11 @@ pub  fn populate_weights(container: &mut dyn WeightContainer, output_line_size :
                 u32);
         if source_pixel_count > allocated_window_size {
             //flow_status_Invalid_internal_state,
-            return false;
+            return Err(WeightsError::SourcePixelCountTooLarge);
         }
 
         for ix in left_src_pixel..=right_src_pixel {
-            let mut tx = ix - left_src_pixel;
+            let tx = ix - left_src_pixel;
             let mut add: f64 =
                 filter_func(details,
                             downscale_factor
@@ -457,10 +640,11 @@ pub  fn populate_weights(container: &mut dyn WeightContainer, output_line_size :
                 }
             } else if total_weight == 0f64{
                 // In this situation we have a problem to report
+                return Err(WeightsError::TotalWeightZero);
             }
         }
         //printf("\n");
-        for mut v in weights.iter_mut() {
+        for v in weights.iter_mut() {
             if *v < 0f32 {
                 *v *= neg_factor;
                 negative_area -= *v as f64;
@@ -475,7 +659,7 @@ pub  fn populate_weights(container: &mut dyn WeightContainer, output_line_size :
         let mut shrunk_right_src_pixel = right_src_pixel;
         while weights.ends_with(&[0f32]) {
             shrunk_right_src_pixel -= 1;
-            weights.truncate(1);
+            weights.truncate(weights.len() - 1);
         }
         let mut shrunk_left_src_pixel = left_src_pixel;
         while weights.starts_with(&[0f32]) {
@@ -483,90 +667,8 @@ pub  fn populate_weights(container: &mut dyn WeightContainer, output_line_size :
             weights.remove(0);
         }
 
-        if !container.add_output_pixel(shrunk_left_src_pixel, shrunk_right_src_pixel, &weights) {
-            return false;
-        }
+        container.add_output_pixel(shrunk_left_src_pixel, shrunk_right_src_pixel, &weights)?;
     }
     //(*res).percent_negative = negative_area / positive_area;
-    return true
+    Ok(())
 }
-//
-//
-//struct flow_interpolation_line_contributions *
-//flow_interpolation_line_contributions_create(flow_c * context, const u32 output_line_size,
-//                                             const u32 input_line_size,
-//                                             const struct flow_interpolation_details * details)
-//{
-//    const double sharpen_ratio = flow_interpolation_details_percent_negative_weight(details);
-//    const double desired_sharpen_ratio = fmin(0.999999999f, fmax(sharpen_ratio, details->sharpen_percent_goal / 100.0));
-//
-//    const double scale_factor = (double)output_line_size / (double)input_line_size;
-//    const double downscale_factor = fmin(1.0, scale_factor);
-//    const double half_source_window = (details->window + 0.5) / downscale_factor;
-//
-//    const u32 allocated_window_size = (int)ceil(2 * (half_source_window - TONY)) + 1;
-//    u32 u, ix;
-//    struct flow_interpolation_line_contributions * res
-//        = LineContributions_alloc(context, output_line_size, allocated_window_size);
-//    if (res == NULL) {
-//        FLOW_add_to_callstack(context);
-//        return NULL;
-//    }
-//    double negative_area = 0;
-//    double positive_area = 0;
-//
-//    for (u = 0; u < output_line_size; u++) {
-//        const double center_src_pixel = ((double)u + 0.5) / scale_factor - 0.5;
-//
-//        const int left_edge = (int)floor(center_src_pixel) - ((allocated_window_size - 1) / 2);
-//        const int right_edge = left_edge + allocated_window_size - 1;
-//
-//        const u32 left_src_pixel = (u32)int_max(0, left_edge);
-//        const u32 right_src_pixel = (u32)int_min(right_edge, (int)input_line_size - 1);
-//
-//        // Net weight
-//        double total_weight = 0.0;
-//        // Sum of negative and positive weights
-//        double total_negative_weight = 0.0;
-//        double total_positive_weight = 0.0;
-//
-//        const u32 source_pixel_count = right_src_pixel - left_src_pixel + 1;
-//
-//        if (source_pixel_count > allocated_window_size) {
-//            flow_interpolation_line_contributions_destroy(context, res);
-//            FLOW_error(context, flow_status_Invalid_internal_state);
-//            return NULL;
-//        }
-//
-//        res->ContribRow[u].Left = left_src_pixel;
-//        res->ContribRow[u].Right = right_src_pixel;
-//
-//        float * weights = res->ContribRow[u].Weights;
-//
-//        for (ix = left_src_pixel; ix <= right_src_pixel; ix++) {
-//            int tx = ix - left_src_pixel;
-//            double add = (*details->filter)(details, downscale_factor *((double)ix - center_src_pixel));
-//            if (fabs(add) <= 0.00000002) {
-//                add = 0.0;
-//                // Weights below a certain threshold make consistent x-plat
-//                // integration test results impossible. pos/neg zero, etc.
-//                // They should be rounded down to zero at the threshold at which results are consistent.
-//            }
-//            weights[tx] = (float)add;
-//            total_weight += add;
-//            total_negative_weight += fmin(0, add);
-//            total_positive_weight += fmax(0, add);
-//        }
-//
-//
-//        //printf("cur= %f cur+= %f cur-= %f desired_sharpen_ratio=%f sharpen_ratio-=%f\n", total_weight, total_positive_weight, total_negative_weight, desired_sharpen_ratio, sharpen_ratio);
-//
-//
-//
-//
-//
-//
-//    }
-//    res->percent_negative = negative_area / positive_area;
-//    return res;
-//}

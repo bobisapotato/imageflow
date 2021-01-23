@@ -25,15 +25,15 @@ fn create_context_router() -> MethodRouter<'static, Context> {
                     }));
     r.add_responder("v0.1/get_image_info",
                     Box::new(move |context: &mut Context, data: s::GetImageInfo001| {
-                        Ok(s::ResponsePayload::ImageInfo(context.get_unscaled_image_info(data.io_id).map_err(|e| e.at(here!()))?))
+                        Ok(s::ResponsePayload::ImageInfo(context.get_unscaled_rotated_image_info(data.io_id).map_err(|e| e.at(here!()))?))
                     }));
     r.add_responder("v1/get_image_info",
                     Box::new(move |context: &mut Context, data: s::GetImageInfo001| {
-                        Ok(s::ResponsePayload::ImageInfo(context.get_unscaled_image_info(data.io_id).map_err(|e| e.at(here!()))?))
+                        Ok(s::ResponsePayload::ImageInfo(context.get_unscaled_rotated_image_info(data.io_id).map_err(|e| e.at(here!()))?))
                     }));
     r.add_responder("v1/get_scaled_image_info",
                     Box::new(move |context: &mut Context, data: s::GetImageInfo001| {
-                        Ok(s::ResponsePayload::ImageInfo(context.get_scaled_image_info(data.io_id).map_err(|e| e.at(here!()))?))
+                        Ok(s::ResponsePayload::ImageInfo(context.get_scaled_rotated_image_info(data.io_id).map_err(|e| e.at(here!()))?))
                     }));
     r.add_responder("v0.1/tell_decoder",
                     Box::new(move |context: &mut Context, data: s::TellDecoder001| {
@@ -181,7 +181,7 @@ fn test_handler() {
     });
     steps.push(s::Node::Encode {
         io_id: 1,
-        preset: s::EncoderPreset::LibjpegTurbo { quality: Some(90), optimize_huffman_coding: None, progressive: None },
+        preset: s::EncoderPreset::LibjpegTurbo { quality: Some(90), optimize_huffman_coding: None, progressive: None, matte: None },
     });
 
     let build = s::Build001 {
@@ -196,4 +196,14 @@ fn test_handler() {
     };
 
     let response = Context::create().unwrap().build_1(build);
+}
+
+#[test]
+fn test_get_version_info(){
+    let response = Context::create().unwrap().get_version_info().unwrap();
+
+    assert!(response.build_date.len() > 0);
+    assert!(response.git_describe_always.len() > 0);
+    assert!(response.last_git_commit.len() > 0);
+    assert!(response.long_version_string.len() > 0);
 }

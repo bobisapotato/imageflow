@@ -1,13 +1,13 @@
 #!/usr/bin/env ruby
 
-IMAGES = ["turtleegglarge.jpg","rings2.png","gamma_dalai_lama_gray.jpg","u1.jpg","waterhouse.jpg","u6.jpg","premult_test.png","gamma_test.jpg"]
+IMAGES = ["turtleegglarge.jpg","rings2.png","gamma_dalai_lama_gray.jpg","u1.jpg", "u1_square.jpg", "waterhouse.jpg","u6.jpg","premult_test.png","gamma_test.jpg"]
 
 
-version_info = `convert --version` + `./flow-proto1 --version` + `./imagew --version`
+version_info = `convert --version` + `./imageflow_tool --version` + `./imagew --version`
 
 `./fetch_images.sh`
 
-`mkdir ./compare/images`
+`mkdir -p ./compare/images`
 EXEPATH = "./"
 IMAGEPATH = "./source_images/"
 OUTPATH ="./compare/images/"
@@ -24,14 +24,20 @@ def create_command(tool, image, nogamma, filter, sharpen, w)
     if filter == :robidoux
       w_filter = " -filter cubic0.37821575509399867,0.31089212245300067 "
     end
-    if filter == :robidouxsharp
+    if filter == :robidoux_sharp
       w_filter=" -filter cubic0.2620145123990142,0.3689927438004929 "
     end
-    if filter == :ncubic
+    if filter == :n_cubic
       w_filter=" -filter cubic0.37821575509399867,0.31089212245300067 -blur 0.85574108326"
     end
-    if filter == :ncubicsharp
+    if filter == :n_cubic_sharp
       w_filter=" -filter cubic0.2620145123990142,0.3689927438004929 -blur 0.90430390753 "
+    end
+    if filter == :catmull_rom
+      w_filter = " -filter catrom "
+    end
+    if filter == :cubic_b_spline
+      w_filter = " -filter bspline "
     end
     if filter == :ginseng
       return nil #Because imagew doesn't do ginseng
@@ -44,14 +50,20 @@ def create_command(tool, image, nogamma, filter, sharpen, w)
     if filter == :ginseng
       magick_filter = " -define filter:filter=Sinc -define filter:window=Jinc -define filter:lobes=3 "
     end
-    if filter == :ncubic
-      magick_filter = "  -filter robidoux -define filter:blur=0.85574108326 "
+    if filter == :n_cubic
+      magick_filter = " -filter robidoux -define filter:blur=0.85574108326 "
     end
-    if filter == :bspline
-      magick_filter = "  -filter spline"
+    if filter == :cubic_b_spline
+      magick_filter = " -filter spline"
     end
-    if filter == :ncubicsharp
+    if filter == :n_cubic_sharp
       magick_filter = " -filter robidouxsharp -define filter:blur=0.90430390753  "
+    end
+    if filter == :catmull_rom
+      magick_filter = " -filter catrom "
+    end
+    if filter == :robidoux_sharp
+      magick_filter = " -filter robidouxsharp "
     end
     if nogamma
       command = "convert #{infile} #{magick_filter} -resize #{w} #{OUTPATH}#{outfile}"
@@ -59,9 +71,9 @@ def create_command(tool, image, nogamma, filter, sharpen, w)
       command = "convert #{infile} -set colorspace sRGB -colorspace RGB #{magick_filter}  -resize #{w} -colorspace sRGB #{OUTPATH}#{outfile}"
     end
   end
-  if tool == :flow
-    outputformat = image =~ /\.png/ ? "png" : "png24"
-    command = "#{EXEPATH}flow-proto1 #{nogamma ? '--incorrectgamma' : ''} --down-filter #{filter} --up-filter #{filter} --format #{outputformat} -m 100 --constrain distort  --sharpen #{sharpen} -w #{w} -i #{infile} -o #{OUTPATH}#{outfile}"
+  if tool == :flow || tool == :flow_preshrink
+    outputformat = image =~ /\.png/ ? "png" : "png"
+    command = "#{EXEPATH}imageflow_tool v1/querystring --command=\"&f.sharpen=#{sharpen}&w=#{w}&down.filter=#{filter}#{nogamma ? '&down.colorspace=srgb&up.colorspace=srgb' : '&down.colorspace=linear&up.colorspace=linear'}&decoder.min_precise_scaling_ratio=#{tool == :flow ? 100 : 1}&up.filter=#{filter}&format=#{outputformat}&scale=both\" --in #{infile} --out #{OUTPATH}#{outfile} --quiet"
   end
   {command: command, image: image, gamma: nogamma ? 'nogamma' : 'linear', filter: filter, sharpen: sharpen,
     w: w, tool: tool,
@@ -70,10 +82,12 @@ end
 
 # imageflow's box filter acts differently, and is not compared here
 SIZES = [200,400,800]
-FILTERS = [:triangle, :lanczos, :lanczos2, :ginseng, :ncubic, :ncubicsharp, :robidoux, :robidouxsharp,
-:bspline, :hermite, :catrom, :mitchell]
+
+
+FILTERS = [:triangle, :lanczos, :lanczos2, :ginseng, :n_cubic, :n_cubic_sharp, :robidoux, :robidoux_sharp,
+:cubic_b_spline, :hermite, :catmull_rom, :mitchell]
 GAMMAS = [true, false]
-SHARPENS = [0,2,5,10]
+SHARPENS = [0]
 
 def generate_for(tool)
   commands = []
@@ -91,11 +105,11 @@ def generate_for(tool)
   commands.compact
 end
 
-tools = [:flow, :magick, :imagew]
+tools = [:flow, :flow_preshrink, :magick, :imagew]
 
 require 'thread'
 
-flow_commands = generate_for(:flow)
+flow_commands = generate_for(:flow) + generate_for(:flow_preshrink)
 
 commands = generate_for(:imagew) + generate_for(:magick) + flow_commands
 
@@ -111,7 +125,12 @@ consumers = (0..5).map do |t|
     while !queue.empty? do
       work = queue.pop
       unless File.exist? work[:path]
-        work[:output] = `#{work[:command]}`
+        begin
+            work[:output] = `#{work[:command]}`
+        rescue => e
+            puts "Failed to run #{work[:command]}: #{e}"
+            raise
+        end
       end
       completed_work << work
     end
@@ -126,7 +145,7 @@ consumers = (0..5).map do |t|
   Thread.new do
     while !queue.empty? do
       work = queue.pop
-      compare_to_path = work[:path].gsub(/_flow_/,"_imagew_")
+      compare_to_path = work[:path].gsub(/_flow_preshrink_/,"_imagew_").gsub(/_flow_/,"_imagew_")
       next unless File.exist? compare_to_path
 
       dssim_path = "#{work[:path]}_dssim.txt"
@@ -162,3 +181,5 @@ tools: tools, filters: FILTERS, sharpen_values: SHARPENS, gamma_values: ["nogamm
 
 IO.write("./compare/data.js", "window.data = " + JSON.pretty_generate(json_hash) + ";")
 
+puts "\n Open ./compare/compare.html in your browser.\n"
+puts "open ./compare/compare.html  || x-www-browser ./compare/compare.html "

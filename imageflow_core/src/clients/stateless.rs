@@ -83,7 +83,7 @@ impl LibClient {
      fn get_image_info_inner(context: &mut Context, bytes: &[u8])
                           -> std::result::Result<s::ImageInfo, FlowError> {
         context.add_input_bytes(0, bytes).map_err(|e| e.at(here!()))?;
-        Ok(context.get_unscaled_image_info(0).map_err(|e| e.at(here!()))?)
+        Ok(context.get_unscaled_rotated_image_info(0).map_err(|e| e.at(here!()))?)
 
     }
     pub fn get_image_info(&mut self, bytes: &[u8])
@@ -135,8 +135,8 @@ impl LibClient {
         let payload = context.execute_1(send_execute).map_err(|e| e.at(here!()))?;
 
 
-        let (encodes, perf): (Vec<s::EncodeResult>, Option<s::BuildPerformance>) = match payload {
-            s::ResponsePayload::JobResult(s::JobResult { encodes, performance}) => (encodes, performance),
+        let (decodes, encodes, perf): (Vec<s::DecodeResult>, Vec<s::EncodeResult>, Option<s::BuildPerformance>) = match payload {
+            s::ResponsePayload::JobResult(s::JobResult { decodes, encodes, performance}) => (decodes, encodes, performance),
             _ => {
                 unreachable!()
             }

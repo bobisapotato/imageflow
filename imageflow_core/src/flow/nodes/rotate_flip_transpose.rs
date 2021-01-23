@@ -48,8 +48,8 @@ impl NodeDefOneInputExpand for ApplyOrientationDef{
         if let NodeParams::Json(s::Node::ApplyOrientation { flag }) = p {
             let replacement_nodes: Vec<&'static dyn NodeDef> = match flag {
                 7 => vec![&ROTATE_180, &TRANSPOSE],
-                8 => vec![&ROTATE_90],
-                6 => vec![&ROTATE_270],
+                8 => vec![&ROTATE_270],
+                6 => vec![&ROTATE_90],
                 5 => vec![&TRANSPOSE],
                 4 => vec![&FLIP_V],
                 3 => vec![&ROTATE_180],
@@ -139,18 +139,31 @@ impl NodeDefOneInputOneCanvas for TransposeMutDef {
         Ok(())
     }
 
-    fn render(&self, c: &Context, canvas: &mut BitmapBgra, input: &mut BitmapBgra, p: &NodeParams) -> Result<()> {
+    fn render(&self, c: &Context, canvas_key: BitmapKey, input_key: BitmapKey, p: &NodeParams) -> Result<()> {
         unsafe {
-            if input.fmt != canvas.fmt {
-                panic!("Can't copy between bitmaps with different pixel formats")
-            }
-            if input == canvas {
+            if input_key == canvas_key {
                 panic!("Canvas and input must be different bitmaps for transpose to work!")
             }
 
-            if !crate::ffi::flow_bitmap_bgra_transpose(c.flow_c(), input as *mut BitmapBgra, canvas as *mut BitmapBgra) {
-                panic!("Failed to transpose bitmap")
+            let bitmaps = c.borrow_bitmaps()
+                .map_err(|e| e.at(here!()))?;
+            let mut canvas_bitmap = bitmaps.try_borrow_mut(canvas_key)
+                .map_err(|e| e.at(here!()))?;
+            let mut canvas_bgra = canvas_bitmap.get_window_u8().unwrap()
+                .to_bitmap_bgra().map_err(|e| e.at(here!()))?;
+
+            let mut input_bitmap = bitmaps.try_borrow_mut(input_key)
+                .map_err(|e| e.at(here!()))?;
+            let mut input_bgra = input_bitmap.get_window_u8().unwrap()
+                .to_bitmap_bgra().map_err(|e| e.at(here!()))?;
+
+            if input_bgra.fmt != canvas_bgra.fmt {
+                panic!("Can't copy between bitmaps with different pixel formats")
             }
+
+
+            crate::graphics::transpose::flow_bitmap_bgra_transpose(&mut input_bgra, &mut canvas_bgra)
+                .map_err(|e| e.at(here!()))?;
         }
         Ok(())
     }
@@ -168,11 +181,19 @@ impl NodeDefMutateBitmap for FlipVerticalMutNodeDef{
     fn fqn(&self) -> &'static str{
         "imazen.flip_vertical_mutate"
     }
-    fn mutate(&self, c: &Context, bitmap: &mut BitmapBgra,  p: &NodeParams) -> Result<()>{
+    fn mutate(&self, c: &Context, bitmap_key: BitmapKey,  p: &NodeParams) -> Result<()>{
         unsafe {
-            if !crate::ffi::flow_bitmap_bgra_flip_vertical(c.flow_c(), bitmap as *mut BitmapBgra){
-                return Err(cerror!(c))
-            }
+            let bitmaps = c.borrow_bitmaps()
+                .map_err(|e| e.at(here!()))?;
+            let mut bitmap = bitmaps.try_borrow_mut(bitmap_key)
+                .map_err(|e| e.at(here!()))?;
+
+            let mut bitmap_bgra = bitmap.get_window_u8().unwrap()
+                .to_bitmap_bgra().map_err(|e| e.at(here!()))?;
+
+            crate::graphics::flip::flow_bitmap_bgra_flip_vertical(&mut bitmap_bgra)
+                .map_err(|e| e.at(here!()))?;
+
         }
         Ok(())
     }
@@ -188,11 +209,20 @@ impl NodeDefMutateBitmap for FlipHorizontalMutNodeDef{
     fn fqn(&self) -> &'static str{
         "imazen.flip_vertical_mutate"
     }
-    fn mutate(&self, c: &Context, bitmap: &mut BitmapBgra,  p: &NodeParams) -> Result<()>{
+    fn mutate(&self, c: &Context, bitmap_key: BitmapKey,  p: &NodeParams) -> Result<()>{
         unsafe {
-            if !crate::ffi::flow_bitmap_bgra_flip_horizontal(c.flow_c(), bitmap as *mut BitmapBgra){
-                return Err(cerror!(c))
-            }
+
+            let bitmaps = c.borrow_bitmaps()
+                .map_err(|e| e.at(here!()))?;
+            let mut bitmap = bitmaps.try_borrow_mut(bitmap_key)
+                .map_err(|e| e.at(here!()))?;
+
+            let mut bitmap_bgra = bitmap.get_window_u8().unwrap()
+                    .to_bitmap_bgra().map_err(|e| e.at(here!()))?;
+
+            crate::graphics::flip::flow_bitmap_bgra_flip_horizontal(&mut bitmap_bgra)
+                .map_err(|e| e.at(here!()))?;
+
         }
         Ok(())
     }
@@ -216,8 +246,8 @@ impl NodeDefOneInputExpand for Rotate90Def {
     fn expand(&self, ctx: &mut OpCtxMut, ix: NodeIndex, p: NodeParams, parent: FrameInfo) -> Result<()> {
         ctx.replace_node(ix,
                          vec![
-                             Node::n(&TRANSPOSE, NodeParams::None),
                              Node::n(&FLIP_V, NodeParams::None),
+                             Node::n(&TRANSPOSE, NodeParams::None)
                          ]);
         Ok(())
     }
@@ -242,8 +272,8 @@ impl NodeDefOneInputExpand for Rotate270Def {
     fn expand(&self, ctx: &mut OpCtxMut, ix: NodeIndex, p: NodeParams, parent: FrameInfo) -> Result<()> {
         ctx.replace_node(ix,
                          vec![
-                             Node::n(&FLIP_V, NodeParams::None),
                              Node::n(&TRANSPOSE, NodeParams::None),
+                             Node::n(&FLIP_V, NodeParams::None),
                          ]);
         Ok(())
     }

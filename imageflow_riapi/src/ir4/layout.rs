@@ -418,9 +418,14 @@ impl Ir4Layout{
             None => None
         };
 
-        let scaling_colorspace = match self.i.down_colorspace {
-            Some(ScalingColorspace::Linear) if downscaling => Some(s::ScalingFloatspace::Linear),
-            Some(ScalingColorspace::Srgb) if downscaling => Some(s::ScalingFloatspace::Srgb),
+        let which_colorspace = if downscaling {
+            self.i.down_colorspace
+        }else{
+            self.i.up_colorspace
+        };
+        let scaling_colorspace =  match which_colorspace {
+            Some(ScalingColorspace::Linear) => Some(s::ScalingFloatspace::Linear),
+            Some(ScalingColorspace::Srgb) => Some(s::ScalingFloatspace::Srgb),
             _ => None
 
         };
@@ -514,6 +519,11 @@ impl Ir4Layout{
 
         b.add_rotate(self.i.rotate);
         b.add_flip(self.i.flip);
+
+        //We apply red dot watermarking after rotate/flip unlike imageresizer
+        if self.i.watermark_red_dot == Some(true){
+            b.add(s::Node::WatermarkRedDot);
+        }
 
         Ok(Ir4LayoutInfo {
             canvas

@@ -11,8 +11,8 @@ pub mod common;
 use crate::common::*;
 
 
-use imageflow_core::{Context, ErrorKind, FlowError, CodeLocation};
-use s::{CommandStringKind};
+use imageflow_core::{Context, FlowError, CodeLocation};
+use s::{CommandStringKind, ResponsePayload};
 
 
 const DEBUG_GRAPH: bool = false;
@@ -127,6 +127,7 @@ fn test_encode_mozjpeg_resized() {
             preset: s::EncoderPreset::Mozjpeg {
                 progressive: None,
                 quality: Some(50),
+                matte: None
             },
         },
     ];
@@ -146,13 +147,14 @@ fn test_encode_mozjpeg() {
     let steps = reencode_with(s::EncoderPreset::Mozjpeg {
                 progressive: None,
                 quality: Some(50),
+                matte: None
             });
 
     compare_encoded_to_source(IoTestEnum::Url(FRYMIRE_URL.to_owned()),
                               DEBUG_GRAPH,
                               Constraints {
                                   max_file_size: Some(301_000),
-                                  similarity: Similarity::AllowDssimMatch(0.028, 0.06),
+                                  similarity: Similarity::AllowDssimMatch(0.0275, 0.06),
                               },
                               steps
     );
@@ -244,18 +246,42 @@ pub fn compare_encoded_to_source(input: IoTestEnum, debug: bool, require: Constr
     IoTestTranslator{}.add(&mut context, 0, input).unwrap();
     IoTestTranslator{}.add(&mut context, 1, IoTestEnum::OutputBuffer).unwrap();
 
-    let _ = context.execute_1(execute).unwrap();
+    let response = context.execute_1(execute).unwrap();
+
+    match response{
+
+        ResponsePayload::JobResult(r) => {
+            assert_eq!(r.decodes.len(), 1);
+            assert!(r.decodes[0].preferred_mime_type.len() > 0);
+            assert!(r.decodes[0].preferred_extension.len() > 0);
+            assert!(r.decodes[0].w > 0);
+            assert!(r.decodes[0].h > 0);
+            assert_eq!(r.encodes.len(), 1);
+            assert!(r.encodes[0].preferred_mime_type.len() > 0);
+            assert!(r.encodes[0].preferred_extension.len() > 0);
+            assert!(r.encodes[0].w > 0);
+            assert!(r.encodes[0].h > 0);
+        }
+        _ => {}
+    }
 
     let bytes = context.get_output_buffer_slice(1).unwrap();
 
-    let ctx = ChecksumCtx::visuals(&context);
+    let ctx = ChecksumCtx::visuals();
 
     let mut context2 = Context::create().unwrap();
-    let original = decode_input(&mut context2, input_copy);
+    unsafe {
+        let bitmap_key = decode_input(&mut context2, input_copy);
 
-    let original_checksum = ChecksumCtx::checksum_bitmap(original);
-    ctx.save_frame(original, &original_checksum);
+        let original = context.borrow_bitmaps().unwrap()
+            .try_borrow_mut(bitmap_key).unwrap()
+            .get_window_u8().unwrap()
+            .to_bitmap_bgra().unwrap();
 
 
-    compare_with(&ctx, &original_checksum, original, ResultKind::Bytes(bytes), require, true)
+        let original_checksum = ChecksumCtx::checksum_bitmap(&original);
+        ctx.save_frame(&original, &original_checksum);
+
+        compare_with(&ctx, &original_checksum, &context2, bitmap_key, ResultKind::Bytes(bytes), require, true)
+    }
 }

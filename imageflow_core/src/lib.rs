@@ -25,7 +25,6 @@ extern crate serde_derive;
 extern crate serde_json;
 extern crate lcms2;
 extern crate libc;
-extern crate rustc_serialize;
 extern crate uuid;
 extern crate imagequant;
 extern crate gif;
@@ -65,10 +64,17 @@ pub mod clients;
 pub mod ffi;
 pub mod parsing;
 pub mod test_helpers;
+mod allocation_container;
+
 use std::fmt;
 use std::borrow::Cow;
 use petgraph::graph::NodeIndex;
 
+pub use crate::graphics::bitmaps::BitmapKey;
+
+pub mod helpers{
+    pub use crate::codecs::write_png;
+}
 #[doc(hidden)]
 mod internal_prelude {
     #[doc(hidden)]
